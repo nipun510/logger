@@ -1,10 +1,18 @@
 # ifndef LOGGER_HPP
-#  define LOGGER_HPP
+# define LOGGER_HPP
 
 
 #include <iostream>
 #include <vector>
+#include <algorithm>
 #include <sstream>
+#include <thread>
+#include <mutex>
+
+#define INFO(X) info(x)
+#define WARN(X) warn(x)
+#define ERRROR(X) error(x)
+
 
 namespace logger
 {
@@ -16,11 +24,11 @@ namespace logger
 		const std::string nocolor("\e[0m");
 	}
 
-	struct Stream
+	struct stream
 	{
 		std::ostream & os;
 		bool color;
-		Stream(std::ostream &os, bool c):os(os), color(c){}
+		stream(std::ostream &os, bool c):os(os), color(c){}
 	};
 
 	struct level
@@ -29,79 +37,84 @@ namespace logger
 		std::string color;
 		level(const std::string &p, const std::string &c): prefix(p), color(c){}
 	};
+
 	namespace log_level
 	{
 	    const level info("[INFO]", color::white);
 		const level warn("[WARN]", color::yellow);
 		const level error("[ERROR]", color::red);
 	}
+	
 	class logger
 	{
-		std::vector<Stream> streams;
+		
 	public:
-		void addstream(std::ostream &os, bool color)
+		static logger * get_instance()
 		{
-			streams.emplace_back(Stream{os, color});
+			if(logger_instance == nullptr)
+			{
+				std::mutex logger_mutex;
+				std::lock_guard<std::mutex> logger_lock(logger_mutex);
+				if(logger_instance == nullptr)
+				{
+					logger_instance = new logger();
+				}
+			}
+			return logger_instance;
+		}
+
+		void add_stream(std::ostream &os, bool color)
+		{
+			streams.emplace_back(stream{os, color});
 		}
 
 		template<typename T>
-		void makeString(std::stringstream &ss, T t)
+		void stringify(std::stringstream &ss, T t)
 		{
 			ss << t;
 		}
 
-		void makestring(std::stringstream &ss, const level & l)
+		void stringify(std::stringstream &ss, const level & l)
 		{
 			ss << l.prefix;
 		}
 
 		template<typename T, typename ...Args>
-		void makeString(std::stringstream & ss, const T & t, const Args& ...  args)
+		void stringify(std::stringstream & ss, const T & t, const Args& ...  args)
 		{
-			makeString(t);
-			makeString(ss, args...);
+			stringify(t);
+			stringify(ss, args...);
 		}
 
 		template<typename... Args>
-		std::string makeString(const Args & ... args)
+		std::string stringify(const Args & ... args)
 		{
 			std::stringstream ss;
-			makeString(ss, args...);
+			stringify(ss, args...);
 			return ss.str();
 		}
 
-
-
+		
 		template<typename... Args>
 		void print(const level & l, const Args& ...  args)
 		{
-			for(auto & stream : streams)
-			{
-				if(stream.color)
-				{
-					stream.os << l.color;
-				}
-				stream.os << l.prefix;
-				stream.os << makeString(args...);
-				
-			}
+		
+			std::for_each(streams.begin(), streams.end(), [this, &l, &args...](stream s){
+				if(s.color) s.os << l.color;
+				s.os << stringify(l);
+				s.os << stringify(args...);
+			});
 		}
 
 		template<typename ...Args>
 		void println(const Args& ...  args)
 		{
-			
+			std::lock_guard<std::mutex> stream_lock(stream_mutex);
 			print(args...);
-			for(auto & stream: streams)
-			{
-				stream.os << std::endl;
-				if(stream.color)
-				{
-					stream.os << color::nocolor;
-				}
-				
-			}
-
+			std::for_each(streams.begin(), streams.end(), [this](stream s){
+				s.os << std::endl;
+				if(s.color) s.os << color::nocolor;
+			});
 		}
 
 		template<typename... Args>
@@ -133,8 +146,49 @@ namespace logger
 		{
 			log(log_level::error, args...);
 		}
+
+		bool contains_stream() const
+		{
+			return not streams.empty();
+		}
+
+	private:
+
+		logger(){}
+		static logger * logger_instance;
+		std::vector<stream> streams;
+
+		std::mutex stream_mutex;
+		
 	};
+	logger * logger::logger_instance = nullptr;
 }
 
 
+template<typename... Args>
+void info(const Args &... args)
+{
+	if(not logger::logger::get_instance()->contains_stream()) 
+		logger::logger::get_instance()->add_stream(std::cout, true);
+	logger::logger::get_instance()->info(args...);
+
+}
+
+template<typename... Args>
+void warn(const Args &... args)
+{
+	if(not logger::logger::get_instance()->contains_stream()) 
+		logger::logger::get_instance()->add_stream(std::cout, true);
+	logger::logger::get_instance()->warn(args...);
+
+}
+
+template<typename... Args>
+void error(const Args &... args)
+{
+	if(not logger::logger::get_instance()->contains_stream()) 
+		logger::logger::get_instance()->add_stream(std::cout, true);
+	logger::logger::get_instance()->error(args...);
+
+}
 # endif
